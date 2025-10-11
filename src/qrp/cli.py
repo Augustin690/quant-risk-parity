@@ -67,16 +67,29 @@ def run(
 @app.command()
 def report(split_date: str = "2022-01-01"):
     import matplotlib.pyplot as plt
+    from . import visualize as V
+    
     outputs = Path("outputs")
     R = pd.read_csv(outputs / "portfolio_returns.csv", index_col=0, parse_dates=True)["ret"]
+    W = pd.read_csv(outputs / "weights.csv", index_col=0, parse_dates=True)
+    T = pd.read_csv(outputs / "turnover.csv", index_col=0, parse_dates=True)["turnover"]
+    
     summary = M.summarize(R, split_date)
     summary.to_csv(outputs / "summary.csv")
     typer.echo(summary.to_string())
 
+    # Create comprehensive dashboard
+    fig = V.create_dashboard(W, R, T, split_date)
+    fig.savefig(outputs / "dashboard.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    typer.echo(f"Saved dashboard to {outputs / 'dashboard.png'}")
+
+    # Keep simple equity curve for backward compatibility
     eq = (1+R).cumprod()
-    fig = plt.figure()
+    fig_simple = plt.figure(figsize=(10, 6))
     eq.plot(title="Equity Curve")
-    fig.savefig(outputs / "equity_curve.png", dpi=150, bbox_inches="tight")
+    fig_simple.savefig(outputs / "equity_curve.png", dpi=150, bbox_inches="tight")
+    plt.close(fig_simple)
 
 def main():
     app()
