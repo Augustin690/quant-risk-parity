@@ -17,6 +17,8 @@ def run_backtest(
     target_vol_annual: float=0.10,
     cost_bps_per_trade: float=2.0,
     slippage_bps_per_turnover: float=5.0,
+    risk_estim_strat: str="ewma",
+    ewma_halflife_days: int=60,
 ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
     rets = compute_returns(prices)
     dates = rets.index
@@ -26,7 +28,12 @@ def run_backtest(
     lev_hist = pd.Series(0.0, index=dates)
     turnover = pd.Series(0.0, index=dates)
 
-    roll_cov = rets.rolling(ewma_window).cov().dropna()
+    if risk_estim_strat == "rolling":
+        roll_cov = rets.rolling(ewma_window).cov().dropna()
+    elif risk_estim_strat == "ewma":
+        roll_cov = rets.ewm(halflife=ewma_halflife_days).cov().dropna()
+    else:
+        raise ValueError(f"Invalid risk estimation strategy: {risk_estim_strat}")
 
     prev_w = np.zeros(n)
     for t in rebalance_schedule(dates, rebalance):

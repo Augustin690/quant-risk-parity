@@ -24,13 +24,26 @@ def run(
     end: str = None,
     rebalance: str = None,
     target_vol: float = None,
+    risk_estim_strat: str = None,
     ewma_window: int = 60,
+    ewma_halflife_days: int = None,
 ):
     cfg = Config()
     start = start or cfg.start
     end = end or cfg.end
     rebalance = rebalance or cfg.rebalance
     target_vol = target_vol or cfg.target_vol_annual
+    ewma_halflife_days = ewma_halflife_days or cfg.ewma_halflife_days
+    risk_estim_strat = risk_estim_strat or cfg.risk_estim_strat
+
+    print(f"Running backtest with:")
+    print(f"Start: {start}")
+    print(f"End: {end}")
+    print(f"Rebalance: {rebalance}")
+    print(f"Target Vol: {target_vol}")
+    print(f"Risk Estim Strat: {risk_estim_strat}")
+    print(f"Ewma Halflife Days: {ewma_halflife_days}")
+    print(f"Ewma Window: {ewma_window}")
 
     prices_path = Path('data/prices.parquet')
     prices = D.load_prices() if prices_path.exists() else D.fetch_prices(cfg.tickers, start, end)
@@ -43,6 +56,8 @@ def run(
         target_vol_annual=target_vol,
         cost_bps_per_trade=cfg.cost_bps_per_trade,
         slippage_bps_per_turnover=cfg.slippage_bps_per_turnover,
+        risk_estim_strat=risk_estim_strat,
+        ewma_halflife_days=ewma_halflife_days,
     )
     W.to_csv(outputs / "weights.csv")
     R.to_csv(outputs / "portfolio_returns.csv", header=["ret"])
