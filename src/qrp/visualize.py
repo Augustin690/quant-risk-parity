@@ -176,54 +176,127 @@ def plot_individual_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
     ax.xaxis.set_major_locator(mdates.YearLocator())
 
-def plot_class_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
-    """Plot asset class weights as stacked area chart."""
-    class_weights = aggregate_by_class(weights)
-      # make the bars a bit thicker
-    class_weights = class_weights.mul(100)
-    ordered_columns = sorted(class_weights.columns, key=lambda c: list(ASSET_CLASSES.keys()).index(c))
-    colors = [CLASS_COLORS[col] for col in ordered_columns]
-    
-    # make sure it is stacked
+def _compute_bar_positions(index: pd.Index) -> Tuple[np.ndarray, float]:
+    """Return numeric x positions and sensible bar width for a pandas index."""
+    if isinstance(index, pd.DatetimeIndex):
+        x_positions = mdates.date2num(index)
+        if len(x_positions) > 1:
+            deltas = np.diff(x_positions)
+            # Use a robust spacing estimate (10th percentile) and widen slightly for readability
+            delta = np.nanpercentile(deltas[deltas > 0], 10) if np.any(deltas > 0) else 1.0
+            width = max(delta * 0.8, 2.0)
+        else:
+            width = 20.0
+        return x_positions, width
 
-    # Use fill_between with step='post' for thicker, bar-like stacked areas
-    y_bottom = np.zeros(len(class_weights.index))
-    for i, col in enumerate(ordered_columns):
-        y_top = y_bottom + class_weights[col]
-        ax.fill_between(class_weights.index, y_bottom, y_top, step='post', color=colors[i], alpha=0.8, label=col)
-        y_bottom = y_top
-    
-    ax.set_title('Portfolio Weights by Asset Class', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Weight')
-    ax.set_ylim(0, 100)
+    # Fallback for non-datetime indexes
+    x_positions = np.arange(len(index))
+    width = 0.8
+    return x_positions, width
+
+
+def _plot_stacked_bars(
+    data: pd.DataFrame,
+    colors: List[str],
+    ax: plt.Axes,
+    ylabel: str,
+    title: str,
+) -> None:
+    """Generic helper to draw stacked bar charts with clean formatting."""
+    data = data.fillna(0)
+    x_positions, bar_width = _compute_bar_positions(data.index)
+
+    cumulative = np.zeros(len(data.index))
+    for col, color in zip(data.columns, colors):
+        values = data[col].values
+        ax.bar(
+            x_positions,
+            values,
+            bottom=cumulative,
+            width=bar_width,
+            color=color,
+            edgecolor='white',
+            linewidth=0.6,
+            label=col,
+            align='center',
+        )
+        cumulative += values
+
+    if isinstance(data.index, pd.DatetimeIndex):
+        ax.xaxis_date()
+
+    ax.set_title(title, fontsize=12, fontweight='bold')
+    ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
-    
-    # Format x-axis
+
+
+def plot_class_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
+    """Plot asset class weights as stacked bar chart."""
+    class_weights = aggregate_by_class(weights).mul(100)
+    if class_weights.empty:
+        ax.set_visible(False)
+        return
+
+    ordered_columns = sorted(
+        class_weights.columns,
+        key=lambda c: list(ASSET_CLASSES.keys()).index(c),
+    )
+    colors = [CLASS_COLORS[col] for col in ordered_columns]
+
+    _plot_stacked_bars(
+        class_weights[ordered_columns],
+        colors,
+        ax,
+        ylabel='Weight (%)',
+        title='Portfolio Weights by Asset Class',
+    )
+    ax.set_ylim(0, 100)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
     ax.xaxis.set_major_locator(mdates.YearLocator())
 
-def plot_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame, ax: plt.Axes) -> None:
+def plot_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame | None, ax: plt.Axes) -> None:
     """Plot risk contribution by asset class."""
+
+    if returns is None or returns.empty:
+        ax.text(
+            0.5,
+            0.5,
+            "Risk contribution unavailable",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+        return
+
     risk_contrib = compute_risk_contribution(weights, returns)
-    
+
     # Handle case where risk_contrib is empty (no asset returns available)
     if risk_contrib.empty or len(risk_contrib.columns) == 0:
-        # throw error
-        raise ValueError("Risk contribution is empty")
+        ax.text(
+            0.5,
+            0.5,
+            "Risk contribution unavailable",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+        return
 
-    
+    risk_contrib = risk_contrib.fillna(0)
     colors = [CLASS_COLORS[col] for col in risk_contrib.columns]
-    
-    ax.stackplot(risk_contrib.index, *[risk_contrib[col] for col in risk_contrib.columns],
-                 labels=risk_contrib.columns, colors=colors, alpha=0.8)
-    
-    ax.set_title('Risk Contribution by Asset Class', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Risk Contribution (%)')
+
+    _plot_stacked_bars(
+        risk_contrib,
+        colors,
+        ax,
+        ylabel='Risk Contribution (%)',
+        title='Risk Contribution by Asset Class',
+    )
     ax.set_ylim(0, 100)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
-    
+
     # Format x-axis
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
     ax.xaxis.set_major_locator(mdates.YearLocator())
@@ -280,11 +353,24 @@ def plot_returns_distribution(returns: pd.Series, ax: plt.Axes) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=9)
 
-def plot_rolling_volatility_by_class(weights: pd.DataFrame, returns: pd.DataFrame, ax: plt.Axes) -> None:
+def plot_rolling_volatility_by_class(
+    weights: pd.DataFrame, returns: pd.DataFrame | None, ax: plt.Axes
+) -> None:
     """Plot rolling volatility contribution by asset class."""
-    class_weights = aggregate_by_class(weights)
-    window = min(252, len(returns) // 4)
-    
+    if returns is None or returns.empty:
+        ax.text(
+            0.5,
+            0.5,
+            "Rolling vol unavailable",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+        return
+
+    window = max(2, min(252, max(len(returns) // 4, 2)))
+
     # Calculate rolling volatility for each class
     rolling_vol = pd.DataFrame(index=returns.index)
     
@@ -295,10 +381,27 @@ def plot_rolling_volatility_by_class(weights: pd.DataFrame, returns: pd.DataFram
             rolling_vol[class_name] = class_returns.rolling(window).std() * np.sqrt(252)
     
     # Plot
+    if rolling_vol.empty or rolling_vol.dropna(how="all", axis=1).empty:
+        ax.text(
+            0.5,
+            0.5,
+            "Rolling vol unavailable",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+        return
+
     colors = [CLASS_COLORS[col] for col in rolling_vol.columns]
     for i, col in enumerate(rolling_vol.columns):
-        ax.plot(rolling_vol.index, rolling_vol[col], 
-               label=col, color=colors[i], linewidth=2)
+        ax.plot(
+            rolling_vol.index,
+            rolling_vol[col],
+            label=col,
+            color=colors[i],
+            linewidth=2,
+        )
     
     ax.set_title(f'Rolling Volatility by Asset Class ({window}d)', fontsize=12, fontweight='bold')
     ax.set_ylabel('Annualized Volatility')
@@ -354,15 +457,15 @@ def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Ser
     # Plot 6: Risk Contribution by Asset Class
 
     plot_risk_contribution(weights, asset_returns, axes_flat[5])
-    
+
     # Plot 7: Turnover
     plot_turnover(turnover, axes_flat[6])
-    
+
     # Plot 8: Returns Distribution
     plot_returns_distribution(returns, axes_flat[7])
-    
+
     # Plot 9: Rolling Volatility by Asset Class
-    plot_rolling_volatility_by_class(weights, returns.to_frame(), axes_flat[8])
+    plot_rolling_volatility_by_class(weights, asset_returns, axes_flat[8])
     
     # Adjust layout
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
