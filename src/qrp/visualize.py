@@ -160,21 +160,29 @@ def plot_rolling_sharpe(returns: pd.Series, ax: plt.Axes, window: int = 252) -> 
 
 def plot_individual_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
     """Plot individual asset weights as stacked area chart."""
-    # Use distinct colors for each asset
-    colors = plt.cm.Set3(np.linspace(0, 1, len(weights.columns)))
+    # check if weights sum to 1, drop rows with all 0.0 weights
+    weights = weights.drop(weights[weights.eq(0.0).all(axis=1)].index)
+    if not (weights.sum(axis=1) == 1).all():
+        # warning but continue
+        print("Warning: Weights do not sum to 1")
+    # calendar-year average weights
+    W_year = weights.resample("Y").mean()
+
+      # Convert the datetime index to categorical year labels
+    year_labels = W_year.index.year.astype(str)
+    W_year.index = year_labels
+
+    W_year.plot(kind='bar', rot=0, stacked=True, ax=ax)
+     # Explicit ticks & labels (categorical positions 0..N-1)
+    ax.set_xticks(range(len(year_labels)))
+    ax.set_xticklabels(year_labels, rotation=0)
     
-    ax.stackplot(weights.index, *[weights[col] for col in weights.columns],
-                 labels=weights.columns, colors=colors, alpha=0.8)
-    
+    ax.set_xlabel("Year")
     ax.set_title('Portfolio Weights by Asset', fontsize=12, fontweight='bold')
     ax.set_ylabel('Weight')
     ax.set_ylim(0, 1)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8)
-    
-    # Format x-axis
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-    ax.xaxis.set_major_locator(mdates.YearLocator())
 
 def plot_class_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
     """Plot asset class weights as stacked area chart."""
