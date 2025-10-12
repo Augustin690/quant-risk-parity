@@ -93,12 +93,24 @@ def compute_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame) -> p
         
        
 
-def plot_equity_curve(returns: pd.Series, split_date: str, ax: plt.Axes) -> None:
-    """Plot equity curve with IS/OOS split."""
+def plot_equity_curve(returns: pd.Series, split_date: str, ax: plt.Axes, baseline_returns: pd.Series = None) -> None:
+    """Plot equity curve with IS/OOS split and optional baseline comparison."""
     equity = (1 + returns).cumprod()
     
-    # Plot equity curve
+    # Plot main strategy equity curve
     ax.plot(equity.index, equity.values, linewidth=2, color='black', label='Portfolio')
+    
+    # Plot baseline equity curve if provided
+    if baseline_returns is not None:
+        # Align baseline returns to same date range as strategy
+        common_dates = equity.index.intersection(baseline_returns.index)
+        if len(common_dates) > 0:
+            baseline_aligned = baseline_returns.loc[common_dates]
+            baseline_equity = (1 + baseline_aligned).cumprod()
+            
+            # Plot baseline with gray dashed line
+            ax.plot(baseline_equity.index, baseline_equity.values, 
+                   linewidth=2, color='#808080', linestyle='--', label='60/40 Baseline')
     
     # Add split line
     split_dt = pd.to_datetime(split_date)
@@ -112,7 +124,14 @@ def plot_equity_curve(returns: pd.Series, split_date: str, ax: plt.Axes) -> None
     ax.set_title('Equity Curve', fontsize=12, fontweight='bold')
     ax.set_ylabel('Cumulative Return')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
+    
+    # Adjust legend positioning to accommodate baseline
+    legend_elements = ax.get_legend_handles_labels()
+    if baseline_returns is not None and len(legend_elements[0]) > 3:
+        # If we have baseline + other elements, use smaller font and better positioning
+        ax.legend(fontsize=8, loc='upper left', framealpha=0.9)
+    else:
+        ax.legend(fontsize=9)
     
     # Format x-axis
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
@@ -312,8 +331,8 @@ def plot_rolling_volatility_by_class(weights: pd.DataFrame, returns: pd.DataFram
     ax.xaxis.set_major_locator(mdates.YearLocator())
 
 def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Series, 
-                    split_date: str = "2022-01-01") -> plt.Figure:
-    """Create comprehensive dashboard with 9 panels."""
+                    split_date: str = "2022-01-01", baseline_returns: pd.Series = None) -> plt.Figure:
+    """Create comprehensive dashboard with 9 panels including optional baseline comparison."""
 
     weights = weights.drop(weights[weights.eq(0.0).all(axis=1)].index)
     # Set style
@@ -332,15 +351,18 @@ def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Ser
         # If we can't load asset returns, we'll handle it in the plot function
         pass
     
-    # Create figure
+    # Create figure with enhanced title when baseline is included
     fig, axes = plt.subplots(3, 3, figsize=(20, 15))
-    fig.suptitle('Risk Parity Strategy Dashboard', fontsize=16, fontweight='bold', y=0.98)
+    title = 'Risk Parity Strategy Dashboard'
+    if baseline_returns is not None:
+        title += ' (with 60/40 Baseline Comparison)'
+    fig.suptitle(title, fontsize=16, fontweight='bold', y=0.98)
     
     # Flatten axes for easier indexing
     axes_flat = axes.flatten()
     
-    # Plot 1: Equity Curve
-    plot_equity_curve(returns, split_date, axes_flat[0])
+    # Plot 1: Equity Curve (with baseline if provided)
+    plot_equity_curve(returns, split_date, axes_flat[0], baseline_returns)
     
     # Plot 2: Drawdowns
     plot_drawdowns(returns, axes_flat[1])
@@ -355,7 +377,6 @@ def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Ser
     plot_class_weights(weights, axes_flat[4])
     
     # Plot 6: Risk Contribution by Asset Class
-
     plot_risk_contribution(weights, asset_returns, axes_flat[5])
     
     # Plot 7: Turnover
@@ -366,6 +387,8 @@ def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Ser
     
     # Plot 9: Rolling Volatility by Asset Class
     plot_rolling_volatility_by_class(weights, returns.to_frame(), axes_flat[8])
+    
+    # Validate weights (existing functionality preserved)
     if not (weights.sum(axis=1) == 1).all():
         # warning but continue
         print("Warning: Weights do not sum to 1")
@@ -380,6 +403,7 @@ def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Ser
                 year_sums = not1[indices_in_year].sum(axis=1).mean()
                 # print all sums for this year
                 print(f"Year {year}: sums = {year_sums.round(5)}")
+    
     # Adjust layout
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     
