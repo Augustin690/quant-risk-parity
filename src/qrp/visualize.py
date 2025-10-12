@@ -41,54 +41,57 @@ def aggregate_by_class(weights: pd.DataFrame) -> pd.DataFrame:
 def compute_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
     """Calculate risk contribution by asset class over time."""
     # Align data
+    print("Computing risk contribution for each asset class")
     common_dates = weights.index.intersection(returns.index)
+    print(f"Found {len(common_dates)} common dates")
     weights_aligned = weights.loc[common_dates]
     returns_aligned = returns.loc[common_dates]
     
-    risk_contrib = pd.DataFrame(index=common_dates)
-    
     # Calculate rolling covariance (252-day window)
     window = min(252, len(returns_aligned) // 4)  # Use 1/4 of data or 252 days
+    print(f"Using window size: {window}")
+
+    # Initialize DataFrame to store risk contributions over time
+    risk_contrib_df = pd.DataFrame(index=common_dates[window:], columns=ASSET_CLASSES.keys())
     
-    for class_name, tickers in ASSET_CLASSES.items():
-        class_tickers = [t for t in tickers if t in weights.columns and t in returns.columns]
-        if not class_tickers:
+    for i in range(window, len(common_dates)):
+        # Get data for this window
+        start_idx = i - window
+        end_idx = i + 1
+
+        ret_window = returns_aligned.iloc[start_idx:end_idx]
+        
+        if len(ret_window) < 2:
+            print(f"Not enough data at {common_dates[i]}")
             continue
             
-        class_risk_contrib = pd.Series(0.0, index=common_dates)
-        
-        for i in range(window, len(common_dates)):
-            # Get data for this window
-            start_idx = i - window
-            end_idx = i + 1
-            
-            w = weights_aligned.iloc[i][class_tickers].values
-            ret_window = returns_aligned.iloc[start_idx:end_idx][class_tickers]
-            
-            if len(ret_window) < 2:
-                continue
-                
-            # Calculate covariance matrix
-            cov_matrix = ret_window.cov().values
-            
-            # Portfolio weights for this class only
-            class_weights = weights_aligned.iloc[i][class_tickers].values
-            
-            # Skip if all weights are zero
-            if np.sum(np.abs(class_weights)) == 0:
-                continue
-            
-            # Calculate marginal contribution to variance for this class
-            class_var = np.dot(class_weights, np.dot(cov_matrix, class_weights))
-            
-            if class_var > 0:
-                # Risk contribution for this class
-                class_contrib = np.sum(class_weights * np.dot(cov_matrix, class_weights))
-                class_risk_contrib.iloc[i] = class_contrib / class_var * 100
-        
-        risk_contrib[class_name] = class_risk_contrib
+        # Calculate covariance matrix
+        cov_matrix = ret_window.cov().values
+
+        portfolio_var = np.dot(weights_aligned.iloc[i], np.dot(cov_matrix, weights_aligned.iloc[i]))
+        portfolio_vol = np.sqrt(portfolio_var)
+
+        # calculate marginal contribution for each asset
+        marginal_contrib = weights_aligned.iloc[i] * np.dot(cov_matrix, weights_aligned.iloc[i])
     
-    return risk_contrib
+        # aggregate marginal contribution for each asset class
+        class_marginal_contributions = {}
+        for class_name, class_tickers in ASSET_CLASSES.items():
+            class_mask = [ticker in class_tickers for ticker in weights_aligned.columns]
+            class_contrib = marginal_contrib[class_mask].sum()
+            class_marginal_contributions[class_name] = class_contrib
+
+        # Convert to risk contribution percentages
+        total_marginal_contrib = sum(class_marginal_contributions.values())
+        if total_marginal_contrib > 0:
+            class_risk_pct = {k: v / total_marginal_contrib * 100 for k, v in class_marginal_contributions.items()}
+            # Store in DataFrame
+            for class_name, risk_pct in class_risk_pct.items():
+                risk_contrib_df.loc[common_dates[i], class_name] = risk_pct
+
+    return risk_contrib_df
+        
+       
 
 def plot_equity_curve(returns: pd.Series, split_date: str, ax: plt.Axes) -> None:
     """Plot equity curve with IS/OOS split."""
@@ -162,11 +165,8 @@ def plot_individual_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
     """Plot individual asset weights as stacked area chart."""
     # check if weights sum to 1, drop rows with all 0.0 weights
     weights = weights.drop(weights[weights.eq(0.0).all(axis=1)].index)
-    if not (weights.sum(axis=1) == 1).all():
-        # warning but continue
-        print("Warning: Weights do not sum to 1")
     # calendar-year average weights
-    W_year = weights.resample("Y").mean()
+    W_year = weights.resample("YE").mean()
 
       # Convert the datetime index to categorical year labels
     year_labels = W_year.index.year.astype(str)
@@ -180,7 +180,7 @@ def plot_individual_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
     ax.set_xlabel("Year")
     ax.set_title('Portfolio Weights by Asset', fontsize=12, fontweight='bold')
     ax.set_ylabel('Weight')
-    ax.set_ylim(0, 1)
+    ax.set_ylim(0, 2.5)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8)
 
@@ -188,53 +188,47 @@ def plot_class_weights(weights: pd.DataFrame, ax: plt.Axes) -> None:
     """Plot asset class weights as stacked area chart."""
     class_weights = aggregate_by_class(weights)
       # make the bars a bit thicker
-    class_weights = class_weights.mul(100)
-    ordered_columns = sorted(class_weights.columns, key=lambda c: list(ASSET_CLASSES.keys()).index(c))
-    colors = [CLASS_COLORS[col] for col in ordered_columns]
+    class_weights_year = class_weights.resample("YE").mean()
     
-    # make sure it is stacked
+    year_labels = class_weights_year.index.year.astype(str)
 
-    # Use fill_between with step='post' for thicker, bar-like stacked areas
-    y_bottom = np.zeros(len(class_weights.index))
-    for i, col in enumerate(ordered_columns):
-        y_top = y_bottom + class_weights[col]
-        ax.fill_between(class_weights.index, y_bottom, y_top, step='post', color=colors[i], alpha=0.8, label=col)
-        y_bottom = y_top
-    
+    class_weights_year.index = year_labels
+
+    class_weights_year.plot(kind='bar', rot=0, stacked=True, ax=ax)
+
+    ax.set_xticks(range(len(year_labels)))
+    ax.set_xticklabels(year_labels, rotation=0)
+
     ax.set_title('Portfolio Weights by Asset Class', fontsize=12, fontweight='bold')
     ax.set_ylabel('Weight')
-    ax.set_ylim(0, 100)
+    ax.set_ylim(0, 2.5)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
-    
-    # Format x-axis
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-    ax.xaxis.set_major_locator(mdates.YearLocator())
 
 def plot_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame, ax: plt.Axes) -> None:
     """Plot risk contribution by asset class."""
     risk_contrib = compute_risk_contribution(weights, returns)
+
+    print(risk_contrib.head())
     
     # Handle case where risk_contrib is empty (no asset returns available)
     if risk_contrib.empty or len(risk_contrib.columns) == 0:
         # throw error
         raise ValueError("Risk contribution is empty")
 
-    
-    colors = [CLASS_COLORS[col] for col in risk_contrib.columns]
-    
-    ax.stackplot(risk_contrib.index, *[risk_contrib[col] for col in risk_contrib.columns],
-                 labels=risk_contrib.columns, colors=colors, alpha=0.8)
+    risk_contrib_year = risk_contrib.resample("YE").mean()
+    year_labels = risk_contrib_year.index.year.astype(str)
+    risk_contrib_year.index = year_labels
+    risk_contrib_year.plot(kind='bar', rot=0, stacked=True, ax=ax)
+
+    ax.set_xticks(range(len(year_labels)))
+    ax.set_xticklabels(year_labels, rotation=0)
     
     ax.set_title('Risk Contribution by Asset Class', fontsize=12, fontweight='bold')
     ax.set_ylabel('Risk Contribution (%)')
     ax.set_ylim(0, 100)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
-    
-    # Format x-axis
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-    ax.xaxis.set_major_locator(mdates.YearLocator())
 
 def plot_turnover(turnover: pd.Series, ax: plt.Axes) -> None:
     """Plot turnover over time."""
@@ -320,7 +314,8 @@ def plot_rolling_volatility_by_class(weights: pd.DataFrame, returns: pd.DataFram
 def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Series, 
                     split_date: str = "2022-01-01") -> plt.Figure:
     """Create comprehensive dashboard with 9 panels."""
-    
+
+    weights = weights.drop(weights[weights.eq(0.0).all(axis=1)].index)
     # Set style
     plt.style.use('seaborn-v0_8-whitegrid')
     
@@ -371,7 +366,20 @@ def create_dashboard(weights: pd.DataFrame, returns: pd.Series, turnover: pd.Ser
     
     # Plot 9: Rolling Volatility by Asset Class
     plot_rolling_volatility_by_class(weights, returns.to_frame(), axes_flat[8])
-    
+    if not (weights.sum(axis=1) == 1).all():
+        # warning but continue
+        print("Warning: Weights do not sum to 1")
+        print(weights.sum(axis=1))
+        # Print for which years this happens, and show the sums in each year
+        not1 = weights.loc[~(weights.sum(axis=1) == 1)]
+        if not not1.empty:
+            years = not1.index.year
+            # For each unique year, print the year and the sum(s) for that year
+            for year in sorted(set(years)):
+                indices_in_year = not1.index.year == year
+                year_sums = not1[indices_in_year].sum(axis=1).mean()
+                # print all sums for this year
+                print(f"Year {year}: sums = {year_sums.round(5)}")
     # Adjust layout
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     
