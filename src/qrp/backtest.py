@@ -24,9 +24,10 @@ def run_backtest(
     dates = rets.index
     cols = rets.columns
     n = len(cols)
-    weights_hist = pd.DataFrame(0.0, index=dates, columns=cols)
-    lev_hist = pd.Series(0.0, index=dates)
-    turnover = pd.Series(0.0, index=dates)
+    # fill with NaNs
+    weights_hist = pd.DataFrame(np.nan, index=dates, columns=cols)
+    lev_hist = pd.Series(np.nan, index=dates)
+    turnover = pd.Series(np.nan, index=dates)
 
     if risk_estim_strat == "rolling":
         roll_cov = rets.rolling(ewma_window).cov().dropna()
