@@ -72,7 +72,7 @@ def compute_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame) -> p
         portfolio_vol = np.sqrt(portfolio_var)
 
         # calculate marginal contribution for each asset
-        marginal_contrib = weights_aligned.iloc[i] * np.dot(cov_matrix, weights_aligned.iloc[i])
+        marginal_contrib = weights_aligned.iloc[i] * np.dot(cov_matrix, weights_aligned.iloc[i])/portfolio_vol
     
         # aggregate marginal contribution for each asset class
         class_marginal_contributions = {}
@@ -226,7 +226,7 @@ def plot_risk_contribution(weights: pd.DataFrame, returns: pd.DataFrame, ax: plt
     
     ax.set_title('Risk Contribution by Asset Class', fontsize=12, fontweight='bold')
     ax.set_ylabel('Risk Contribution (%)')
-    ax.set_ylim(0, 100)
+    ax.set_ylim(0, 105)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
 

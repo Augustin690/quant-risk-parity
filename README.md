@@ -9,3 +9,9 @@ qrp fetch
 qrp run --start 2016-01-01 --end 2025-09-01
 qrp report
 ```
+
+Next steps:
+    - implement 60/40 baseline
+    - use longer-term lookback window for risk estimation
+    - fix the plot for rolling vol by asset class 
+    
