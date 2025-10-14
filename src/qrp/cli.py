@@ -6,22 +6,10 @@ from .config import Config
 from . import data as D
 from . import backtest as BT
 from . import metrics as M
+from .paths import *
+from .data import load_or_fetch_and_cache, force_fetch_and_cache
 
 app = typer.Typer(help="Risk Parity (ERC) backtester with target vol and costs.")
-
-DATA_DIR = "data"
-OUTPUT_DIR = "outputs"
-PRICES_CACHE = "prices.parquet"
-BASELINE_CACHE = "baseline.parquet"
-WEIGHTS_FILE = "weights.csv"
-PORTFOLIO_RETURNS_FILE = "portfolio_returns.csv"
-TURNOVER_FILE = "turnover.csv"
-BASELINE_WEIGHTS_FILE = "baseline_weights.csv"
-BASELINE_RETURNS_FILE = "baseline_returns.csv"
-BASELINE_SUMMARY_FILE = "baseline_summary.csv"
-SUMMARY_FILE = "summary.csv"
-DASHBOARD_FILE = "dashboard.png"
-EQUITY_CURVE_FILE = "equity_curve.png"
 
 def validate_flag(value: str):
     if value is None:
@@ -30,25 +18,7 @@ def validate_flag(value: str):
         raise typer.BadParameter(f"Invalid flag: {value}. Must be 'baseline', 'portfolio', or 'all'.")
     return value
 
-def force_fetch_and_cache(fetch_func, cache_file: str, start: str, end: str, fetch_args=None):
-    if fetch_args is None:
-        fetch_args = []
-    data = fetch_func(start, end, *fetch_args)
-    path = D.cache_prices(data, cache_file)
-    typer.echo(f"Saved data to: {path}")
-def load_or_fetch_and_cache(fetch_func, cache_file: str, start: str, end: str, fetch_args=None) -> pd.DataFrame:
-    if fetch_args is None:
-        fetch_args = []
-    path = Path(f"{DATA_DIR}/{cache_file}")
-    if path.exists():
-        typer.echo(f"Loading cached data from {path}")
-        return D.load_prices(cache_file)
-    else:
-        typer.echo(f"Fetching new data for {cache_file}")
-        data = fetch_func(start, end, *fetch_args)
-        D.cache_prices(data, cache_file)
-        typer.echo(f"Saved to {path}")
-        return data
+## caching helpers moved to cache_utils
 
 @app.command()
 def fetch(start: str = None, end: str = None, flag: str = typer.Option(None, "--flag", callback=validate_flag)):

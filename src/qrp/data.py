@@ -1,11 +1,13 @@
 from __future__ import annotations
-import pandas as pd
-import yfinance as yf
 from pandas_datareader import data as pdr
+from typing import Callable, Iterable, Optional
+import pandas as pd
 from pathlib import Path
+from . import data as D
+from .paths import DATA_DIR
+import typer
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True, parents=True)
+## DATA_DIR centralized in qrp.paths
 
 # Baseline configuration constants
 BASELINE_CONFIG = {
@@ -15,6 +17,39 @@ BASELINE_CONFIG = {
     "bond_weight": 0.4,
     "rebalance_freq": "M"
 }
+
+def force_fetch_and_cache(
+    fetch_func: Callable[..., pd.DataFrame],
+    cache_file: str,
+    start: str,
+    end: str,
+    fetch_args: Optional[Iterable] = None,
+) -> Path:
+    if fetch_args is None:
+        fetch_args = []
+    data = fetch_func(start, end, *fetch_args)
+    path = D.cache_prices(data, cache_file)
+    typer.echo(f"Saved data to: {path}")
+    return path
+
+def load_or_fetch_and_cache(
+    fetch_func: Callable[..., pd.DataFrame],
+    cache_file: str,
+    start: str,
+    end: str,
+    fetch_args: Optional[Iterable] = None,
+) -> pd.DataFrame:
+    if fetch_args is None:
+        fetch_args = []
+    path = DATA_DIR / cache_file
+    if path.exists():
+        typer.echo(f"Loading cached data from {path}")
+        return D.load_prices(cache_file)
+    typer.echo(f"Fetching new data for {cache_file}")
+    data = fetch_func(start, end, *fetch_args)
+    D.cache_prices(data, cache_file)
+    typer.echo(f"Saved to {path}")
+    return data
 
 def fetch_prices(start: str, end: str, tickers: list[str], n_attempts: int = 5) -> pd.DataFrame:
     import time
@@ -88,7 +123,7 @@ def fetch_baseline_data(start: str, end: str) -> pd.DataFrame:
     
     try:
         print(f"Fetching baseline data for tickers: {baseline_tickers}")
-        baseline_data = fetch_prices(baseline_tickers, start, end)
+        baseline_data = fetch_prices(start, end, baseline_tickers)
         
         # Validate that we have data for both baseline tickers
         missing_tickers = [ticker for ticker in baseline_tickers if ticker not in baseline_data.columns]
