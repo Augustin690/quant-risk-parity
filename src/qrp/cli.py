@@ -25,7 +25,7 @@ def run(
     rebalance: str = None,
     target_vol: float = None,
     risk_estim_strat: str = None,
-    ewma_window: int = 60,
+    rolling_window: int = None,
     ewma_halflife_days: int = None,
 ):
     cfg = Config()
@@ -35,6 +35,7 @@ def run(
     target_vol = target_vol or cfg.target_vol_annual
     ewma_halflife_days = ewma_halflife_days or cfg.ewma_halflife_days
     risk_estim_strat = risk_estim_strat or cfg.risk_estim_strat
+    rolling_window = rolling_window or cfg.rolling_window_days
 
     print(f"Running backtest with:")
     print(f"Start: {start}")
@@ -43,7 +44,7 @@ def run(
     print(f"Target Vol: {target_vol}")
     print(f"Risk Estim Strat: {risk_estim_strat}")
     print(f"Ewma Halflife Days: {ewma_halflife_days}")
-    print(f"Ewma Window: {ewma_window}")
+    print(f"Rolling Window: {rolling_window}")
 
     prices_path = Path('data/prices.parquet')
     prices = D.load_prices() if prices_path.exists() else D.fetch_prices(cfg.tickers, start, end)
@@ -53,7 +54,7 @@ def run(
     W, R, T = BT.run_backtest(
         prices.loc[start:end],
         rebalance=rebalance,
-        ewma_window=ewma_window,
+        rolling_window=rolling_window,
         target_vol_annual=target_vol,
         cost_bps_per_trade=cfg.cost_bps_per_trade,
         slippage_bps_per_turnover=cfg.slippage_bps_per_turnover,

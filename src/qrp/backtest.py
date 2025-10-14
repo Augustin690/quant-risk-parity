@@ -14,7 +14,7 @@ def rebalance_schedule(index: pd.DatetimeIndex, freq: str="M") -> pd.DatetimeInd
 def run_backtest(
     prices: pd.DataFrame,
     rebalance: str="M",
-    ewma_window: int=60,
+    rolling_window: int=60,
     target_vol_annual: float=0.10,
     cost_bps_per_trade: float=2.0,
     slippage_bps_per_turnover: float=5.0,
@@ -31,7 +31,7 @@ def run_backtest(
     turnover = pd.Series(np.nan, index=dates)
 
     if risk_estim_strat == "rolling":
-        roll_cov = rets.rolling(ewma_window).cov().dropna()
+        roll_cov = rets.rolling(rolling_window).cov().dropna()
     elif risk_estim_strat == "ewma":
         roll_cov = rets.ewm(halflife=ewma_halflife_days).cov().dropna()
     else:

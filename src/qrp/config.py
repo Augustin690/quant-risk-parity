@@ -6,7 +6,8 @@ class Config(BaseModel):
     end: str = "2025-09-01"
     rebalance: str = "ME"
     target_vol_annual: float = 0.10
-    ewma_halflife_days: int = 20
+    ewma_halflife_days: int = 60
+    rolling_window_days: int = 100
     risk_estim_strat: str = "ewma"
     cost_bps_per_trade: float = 2.0
     slippage_bps_per_turnover: float = 5.0
