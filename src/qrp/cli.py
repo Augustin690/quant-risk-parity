@@ -10,13 +10,40 @@ from . import metrics as M
 app = typer.Typer(help="Risk Parity (ERC) backtester with target vol and costs.")
 
 @app.command()
-def fetch(start: str = None, end: str = None):
+def fetch(start: str = None, end: str = None, flag: str = None):
+    """Fetches price data for configured tickers and saves it to disk.
+
+        This function retrieves price data for the specified date range and stores it in a cache file.
+
+        Args:
+            start: Optional start date for fetching prices. If not provided, uses config default.
+            end: Optional end date for fetching prices. If not provided, uses config default.
+            flag: Optional flag for data fetching, either "baseline", "portfolio", "all"
+
+        Returns:
+            None
+    """
+
     cfg = Config()
     start = start or cfg.start
     end = end or cfg.end
-    prices = D.fetch_prices(cfg.tickers, start, end)
-    path = D.cache_prices(prices)
-    typer.echo(f"Saved: {path}")
+    if flag == "baseline":
+        prices_baseline = D.fetch_baseline_data(start, end)
+        path = D.cache_prices(prices_baseline, "baseline.parquet")
+        typer.echo(f"Saved baseline data to: {path}")
+    elif flag == "portfolio":
+        prices_portfolio = D.fetch_prices(cfg.tickers, start, end)
+        path = D.cache_prices(prices_portfolio)
+        typer.echo(f"Saved portfolio data to: {path}")
+    elif flag == "all":
+        prices_portfolio = D.fetch_prices(cfg.tickers, start, end)
+        prices_baseline = D.fetch_baseline_data(start, end)
+        path = D.cache_prices(prices_baseline, "baseline.parquet")
+        typer.echo(f"Saved baseline data to: {path}")
+        path = D.cache_prices(prices_portfolio)
+        typer.echo(f"Saved portfolio data to: {path}")
+    else:
+        raise ValueError(f"Invalid flag: {flag}")
 
 @app.command()
 def run(
@@ -47,6 +74,8 @@ def run(
     print(f"Rolling Window: {rolling_window}")
 
     prices_path = Path('data/prices.parquet')
+    baseline_path = Path('data/baseline.parquet')
+
     prices = D.load_prices() if prices_path.exists() else D.fetch_prices(cfg.tickers, start, end)
     outputs = Path("outputs"); outputs.mkdir(exist_ok=True, parents=True)
 
@@ -65,7 +94,7 @@ def run(
     # Fetch and run baseline portfolio
     print("Running 60/40 baseline...")
     try:
-        baseline_prices = D.fetch_baseline_data(start, end)
+        baseline_prices = D.load_prices("baseline.parquet") if baseline_path.exists() else D.fetch_baseline_data(start, end)
         # Ensure proper date filtering - baseline data should already be in the right range
         baseline_W, baseline_R = BT.run_baseline(baseline_prices)
         
