@@ -11,7 +11,8 @@ qrp report
 ```
 
 Next steps:
-    - implement 60/40 baseline
-    - use longer-term lookback window for risk estimation
+    - implement 60/40 baseline done
+    - use longer-term lookback window for risk estimation - to be done
+        - need to download 10 years of data prior to investment start
     - fix the plot for rolling vol by asset class 
     
