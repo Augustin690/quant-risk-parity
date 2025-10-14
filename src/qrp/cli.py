@@ -9,8 +9,49 @@ from . import metrics as M
 
 app = typer.Typer(help="Risk Parity (ERC) backtester with target vol and costs.")
 
+DATA_DIR = "data"
+OUTPUT_DIR = "outputs"
+PRICES_CACHE = "prices.parquet"
+BASELINE_CACHE = "baseline.parquet"
+WEIGHTS_FILE = "weights.csv"
+PORTFOLIO_RETURNS_FILE = "portfolio_returns.csv"
+TURNOVER_FILE = "turnover.csv"
+BASELINE_WEIGHTS_FILE = "baseline_weights.csv"
+BASELINE_RETURNS_FILE = "baseline_returns.csv"
+BASELINE_SUMMARY_FILE = "baseline_summary.csv"
+SUMMARY_FILE = "summary.csv"
+DASHBOARD_FILE = "dashboard.png"
+EQUITY_CURVE_FILE = "equity_curve.png"
+
+def validate_flag(value: str):
+    if value is None:
+        raise typer.BadParameter("Flag is required")
+    if value not in ["baseline", "portfolio", "all"]:
+        raise typer.BadParameter(f"Invalid flag: {value}. Must be 'baseline', 'portfolio', or 'all'.")
+    return value
+
+def force_fetch_and_cache(fetch_func, cache_file: str, start: str, end: str, fetch_args=None):
+    if fetch_args is None:
+        fetch_args = []
+    data = fetch_func(start, end, *fetch_args)
+    path = D.cache_prices(data, cache_file)
+    typer.echo(f"Saved data to: {path}")
+def load_or_fetch_and_cache(fetch_func, cache_file: str, start: str, end: str, fetch_args=None) -> pd.DataFrame:
+    if fetch_args is None:
+        fetch_args = []
+    path = Path(f"{DATA_DIR}/{cache_file}")
+    if path.exists():
+        typer.echo(f"Loading cached data from {path}")
+        return D.load_prices(cache_file)
+    else:
+        typer.echo(f"Fetching new data for {cache_file}")
+        data = fetch_func(start, end, *fetch_args)
+        D.cache_prices(data, cache_file)
+        typer.echo(f"Saved to {path}")
+        return data
+
 @app.command()
-def fetch(start: str = None, end: str = None, flag: str = None):
+def fetch(start: str = None, end: str = None, flag: str = typer.Option(None, "--flag", callback=validate_flag)):
     """Fetches price data for configured tickers and saves it to disk.
 
         This function retrieves price data for the specified date range and stores it in a cache file.
@@ -28,22 +69,12 @@ def fetch(start: str = None, end: str = None, flag: str = None):
     start = start or cfg.start
     end = end or cfg.end
     if flag == "baseline":
-        prices_baseline = D.fetch_baseline_data(start, end)
-        path = D.cache_prices(prices_baseline, "baseline.parquet")
-        typer.echo(f"Saved baseline data to: {path}")
+        force_fetch_and_cache(D.fetch_baseline_data, BASELINE_CACHE, start, end)
     elif flag == "portfolio":
-        prices_portfolio = D.fetch_prices(cfg.tickers, start, end)
-        path = D.cache_prices(prices_portfolio)
-        typer.echo(f"Saved portfolio data to: {path}")
+        force_fetch_and_cache(D.fetch_prices, PRICES_CACHE, start, end, fetch_args=[cfg.tickers])
     elif flag == "all":
-        prices_portfolio = D.fetch_prices(cfg.tickers, start, end)
-        prices_baseline = D.fetch_baseline_data(start, end)
-        path = D.cache_prices(prices_baseline, "baseline.parquet")
-        typer.echo(f"Saved baseline data to: {path}")
-        path = D.cache_prices(prices_portfolio)
-        typer.echo(f"Saved portfolio data to: {path}")
-    else:
-        raise ValueError(f"Invalid flag: {flag}")
+        force_fetch_and_cache(D.fetch_baseline_data, BASELINE_CACHE, start, end)
+        force_fetch_and_cache(D.fetch_prices, PRICES_CACHE, start, end, fetch_args=[cfg.tickers])
 
 @app.command()
 def run(
@@ -73,11 +104,8 @@ def run(
     print(f"Ewma Halflife Days: {ewma_halflife_days}")
     print(f"Rolling Window: {rolling_window}")
 
-    prices_path = Path('data/prices.parquet')
-    baseline_path = Path('data/baseline.parquet')
-
-    prices = D.load_prices() if prices_path.exists() else D.fetch_prices(cfg.tickers, start, end)
-    outputs = Path("outputs"); outputs.mkdir(exist_ok=True, parents=True)
+    prices = load_or_fetch_and_cache(D.fetch_prices, PRICES_CACHE, start, end, fetch_args=[cfg.tickers])
+    outputs = Path(OUTPUT_DIR); outputs.mkdir(exist_ok=True, parents=True)
 
     # Run main strategy backtest
     W, R, T = BT.run_backtest(
@@ -94,22 +122,22 @@ def run(
     # Fetch and run baseline portfolio
     print("Running 60/40 baseline...")
     try:
-        baseline_prices = D.load_prices("baseline.parquet") if baseline_path.exists() else D.fetch_baseline_data(start, end)
+        baseline_prices = load_or_fetch_and_cache(D.fetch_baseline_data, BASELINE_CACHE, start, end)
         # Ensure proper date filtering - baseline data should already be in the right range
         baseline_W, baseline_R = BT.run_baseline(baseline_prices)
         
         # Save baseline results
-        baseline_W.to_csv(outputs / "baseline_weights.csv")
-        baseline_R.to_csv(outputs / "baseline_returns.csv", header=["ret"])
+        baseline_W.to_csv(outputs / BASELINE_WEIGHTS_FILE)
+        baseline_R.to_csv(outputs / BASELINE_RETURNS_FILE, header=["ret"])
         print("Baseline calculation completed successfully")
     except Exception as e:
         print(f"Warning: Baseline calculation failed: {e}")
         baseline_R = None
     
     # Save main strategy results
-    W.to_csv(outputs / "weights.csv")
-    R.to_csv(outputs / "portfolio_returns.csv", header=["ret"])
-    T.to_csv(outputs / "turnover.csv")
+    W.to_csv(outputs / WEIGHTS_FILE)
+    R.to_csv(outputs / PORTFOLIO_RETURNS_FILE, header=["ret"])
+    T.to_csv(outputs / TURNOVER_FILE)
     typer.echo(f"Saved outputs to {outputs}")
 
 @app.command()
@@ -117,14 +145,14 @@ def report(split_date: str = "2022-01-01"):
     import matplotlib.pyplot as plt
     from . import visualize as V
     
-    outputs = Path("outputs")
-    R = pd.read_csv(outputs / "portfolio_returns.csv", index_col=0, parse_dates=True)["ret"]
-    W = pd.read_csv(outputs / "weights.csv", index_col=0, parse_dates=True)
-    T = pd.read_csv(outputs / "turnover.csv", index_col=0, parse_dates=True)["turnover"]
+    outputs = Path(OUTPUT_DIR)
+    R = pd.read_csv(outputs / PORTFOLIO_RETURNS_FILE, index_col=0, parse_dates=True)["ret"]
+    W = pd.read_csv(outputs / WEIGHTS_FILE, index_col=0, parse_dates=True)
+    T = pd.read_csv(outputs / TURNOVER_FILE, index_col=0, parse_dates=True)["turnover"]
     
     # Load baseline data if available
     baseline_R = None
-    baseline_path = outputs / "baseline_returns.csv"
+    baseline_path = outputs / BASELINE_RETURNS_FILE
     if baseline_path.exists():
         baseline_R = pd.read_csv(baseline_path, index_col=0, parse_dates=True)["ret"]
         typer.echo("Baseline data found - including in analysis")
@@ -134,12 +162,12 @@ def report(split_date: str = "2022-01-01"):
     # Generate performance summary with baseline comparison if available
     if baseline_R is not None:
         summary = M.summarize_with_baseline(R, baseline_R, split_date)
-        summary.to_csv(outputs / "baseline_summary.csv")
+        summary.to_csv(outputs / BASELINE_SUMMARY_FILE)
         typer.echo("Strategy vs Baseline Performance Summary:")
         typer.echo(summary.to_string())
     else:
         summary = M.summarize(R, split_date)
-        summary.to_csv(outputs / "summary.csv")
+        summary.to_csv(outputs / SUMMARY_FILE)
         typer.echo("Strategy Performance Summary:")
         typer.echo(summary.to_string())
 
@@ -148,9 +176,9 @@ def report(split_date: str = "2022-01-01"):
         fig = V.create_dashboard(W, R, T, split_date, baseline_returns=baseline_R)
     else:
         fig = V.create_dashboard(W, R, T, split_date)
-    fig.savefig(outputs / "dashboard.png", dpi=200, bbox_inches="tight")
+    fig.savefig(outputs / DASHBOARD_FILE, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    typer.echo(f"Saved dashboard to {outputs / 'dashboard.png'}")
+    typer.echo(f"Saved dashboard to {outputs / DASHBOARD_FILE}")
 
     # Keep simple equity curve for backward compatibility with baseline if available
     fig_simple = plt.figure(figsize=(10, 6))
@@ -175,7 +203,7 @@ def report(split_date: str = "2022-01-01"):
         eq = (1+R).cumprod()
         eq.plot(title="Equity Curve", label="Strategy")
     
-    fig_simple.savefig(outputs / "equity_curve.png", dpi=150, bbox_inches="tight")
+    fig_simple.savefig(outputs / EQUITY_CURVE_FILE, dpi=150, bbox_inches="tight")
     plt.close(fig_simple)
 
 def main():

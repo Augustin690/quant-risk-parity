@@ -16,7 +16,7 @@ BASELINE_CONFIG = {
     "rebalance_freq": "M"
 }
 
-def fetch_prices(tickers: list[str], start: str, end: str, n_attempts: int = 5) -> pd.DataFrame:
+def fetch_prices(start: str, end: str, tickers: list[str], n_attempts: int = 5) -> pd.DataFrame:
     import time
     import random
     
