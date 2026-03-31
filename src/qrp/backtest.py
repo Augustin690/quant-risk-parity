@@ -18,6 +18,7 @@ def run_backtest(
     target_vol_annual: float=0.10,
     cost_bps_per_trade: float=2.0,
     slippage_bps_per_turnover: float=5.0,
+    leverage_cost_annual: float=0.0,
     risk_estim_strat: str="ewma",
     ewma_halflife_days: int=60,
 ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
@@ -54,6 +55,14 @@ def run_backtest(
     turnover = turnover.fillna(0.0)
 
     daily_cost = turnover * (cost_bps_per_trade + slippage_bps_per_turnover) / 1e4
+
+    # Leverage financing cost: applied daily to the leveraged portion
+    if leverage_cost_annual > 0:
+        total_weight = weights_hist.abs().sum(axis=1)
+        leveraged_portion = (total_weight - 1.0).clip(lower=0)
+        daily_lev_cost = leveraged_portion * (leverage_cost_annual / 252)
+        daily_cost = daily_cost + daily_lev_cost
+
     port_rets = (weights_hist.shift().fillna(0.0) * rets).sum(axis=1) - daily_cost
     return weights_hist, port_rets, turnover.to_frame("turnover")
 
@@ -113,3 +122,78 @@ def run_baseline(prices: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
     weights_hist = weights_hist.sort_index()
 
     return weights_hist, port_rets
+
+
+def run_sp3_backtest(
+    prices: pd.DataFrame,
+    asset_classes: dict[str, list[str]],
+    rebalance: str = "M",
+    target_vol_annual: float = 0.10,
+    cost_bps_per_trade: float = 2.0,
+    slippage_bps_per_turnover: float = 5.0,
+    leverage_cost_annual: float = 0.02,
+    min_lookback_days: int = 252,
+    max_lookback_days: int = 252 * 15,
+) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    """
+    Run backtest using S&P 3-step Risk Parity method with expanding lookback.
+
+    Args:
+        prices: DataFrame of adjusted close prices.
+        asset_classes: Dict mapping class name to list of ticker strings.
+        rebalance: Rebalance frequency ('M' for monthly).
+        target_vol_annual: Target annualized volatility.
+        cost_bps_per_trade: Transaction cost in basis points.
+        slippage_bps_per_turnover: Slippage cost in basis points per turnover.
+        leverage_cost_annual: Annual financing cost applied to leveraged portion.
+        min_lookback_days: Minimum lookback window in trading days.
+        max_lookback_days: Maximum lookback window in trading days.
+    """
+    from .weights import sp3_weights
+
+    rets = compute_returns(prices)
+    dates = rets.index
+    cols = rets.columns
+    n = len(cols)
+
+    # Build asset class index mapping
+    ac_indices = {}
+    for ac_name, tickers in asset_classes.items():
+        ac_indices[ac_name] = [list(cols).index(t) for t in tickers if t in cols]
+
+    weights_hist = pd.DataFrame(np.nan, index=dates, columns=cols)
+    turnover = pd.Series(np.nan, index=dates)
+
+    # Get rebalance dates
+    rebal_dates = rebalance_schedule(dates, rebalance)
+
+    prev_w = np.zeros(n)
+    for t in rebal_dates:
+        t_loc = dates.get_loc(t)
+        if t_loc < min_lookback_days:
+            continue
+
+        lookback = min(t_loc, max_lookback_days)
+        hist = rets.iloc[t_loc - lookback:t_loc]
+        cov = hist.cov().values * 252  # Annualize
+
+        w = sp3_weights(cov, ac_indices, target_vol_annual)
+        weights_hist.loc[t] = w
+        turnover.loc[t] = np.abs(w - prev_w).sum()
+        prev_w = w
+
+    weights_hist = weights_hist.ffill().fillna(0.0)
+    turnover = turnover.fillna(0.0)
+
+    # Transaction costs
+    daily_cost = turnover * (cost_bps_per_trade + slippage_bps_per_turnover) / 1e4
+
+    # Leverage financing cost
+    if leverage_cost_annual > 0:
+        total_weight = weights_hist.abs().sum(axis=1)
+        leveraged_portion = (total_weight - 1.0).clip(lower=0)
+        daily_lev_cost = leveraged_portion * (leverage_cost_annual / 252)
+        daily_cost = daily_cost + daily_lev_cost
+
+    port_rets = (weights_hist.shift().fillna(0.0) * rets).sum(axis=1) - daily_cost
+    return weights_hist, port_rets, turnover.to_frame("turnover")
