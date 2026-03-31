@@ -10,5 +10,4 @@ data/
 .ipynb_checkpoints/
 .DS_Store
 output/
-*.png
 *.csv
